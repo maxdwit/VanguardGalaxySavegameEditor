@@ -1,0 +1,17 @@
+!! DISABLE STEAM CLOUD SAVE !!
+
+Only tested in Linux, should work if you have at least Python 3.8 in your windows.
+
+# Usage
+
+Copy your savegame here
+
+python3 savegame_editor.py
+
+Choose Savegame. Edit. Save it.
+
+Copy back to your savegame folder.
+
+!! BACKUP YOUR STUFF !!
+
+If you mess it up it is your fault.
