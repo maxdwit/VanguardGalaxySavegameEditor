@@ -533,26 +533,79 @@ def get_active_ship_cargo(data):
     return active_ship, cargo_items
 
 
+def edit_cargo_quantity(cargo_entry):
+    current_count = cargo_entry.get('count', 1)
+    item = cargo_entry.get('item')
+    
+    if isinstance(item, dict):
+        item_name = item.get('displayName', 'Unknown')
+    elif isinstance(item, str):
+        item_name = item
+    else:
+        item_name = str(item)
+    
+    while True:
+        new_value = input(f"Enter new quantity for {item_name} (current: {current_count}, range: 1-99999): ").strip()
+        if not new_value:
+            return
+        
+        try:
+            new_count = int(new_value)
+            if 1 <= new_count <= 99999:
+                cargo_entry['count'] = new_count
+                print(f"Updated {item_name} quantity to {new_count}")
+                return
+            else:
+                print("Value must be between 1 and 99999.")
+        except ValueError:
+            print("Invalid input. Please enter a number.")
+
+
 def edit_active_ship_menu(data):
     while True:
         active_ship, items = find_active_ship_items(data)
+        _, cargo_items = get_active_ship_cargo(data)
         
         if active_ship is None:
             print("\nActive ship not found in savegame.")
             input("Press Enter to continue...")
             return
         
-        if not items:
-            print("\nNo items found on active ship.")
+        if not items and not cargo_items:
+            print("\nNo items or cargo found on active ship.")
             input("Press Enter to continue...")
             return
         
         ship_name = active_ship.get('customName', 'Active Ship')
-        print(f"\n{ship_name} Items:")
-        for idx, item_info in enumerate(items):
-            print(f"  {idx+1}. {item_info['name']} - {item_info['slot']}")
         
-        print("\n[1-{}] Select item to edit | [z/Z] Back".format(len(items)))
+        all_items = []
+        
+        if items:
+            print(f"\n{ship_name} Equipment:")
+            for idx, item_info in enumerate(items):
+                print(f"  {idx+1}. {item_info['name']} - {item_info['slot']}")
+                all_items.append({'type': 'equipment', 'data': item_info})
+        
+        cargo_start_idx = len(all_items)
+        if cargo_items:
+            print(f"\n{ship_name} Cargo:")
+            cargo_data = active_ship.get('cargo', {})
+            cargo_list = cargo_data.get('items', [])
+            for idx, cargo_info in enumerate(cargo_items):
+                cargo_entry = cargo_list[cargo_info['cargo_idx']]
+                count = cargo_entry.get('count', 1)
+                
+                if cargo_info.get('is_simple', False):
+                    item_name = str(cargo_entry.get('item', 'Unknown'))
+                elif isinstance(cargo_info['item'], dict):
+                    item_name = cargo_info['item'].get('displayName', 'Unknown')
+                else:
+                    item_name = str(cargo_info['item'])
+                
+                print(f"  {len(all_items)+1}. {item_name} (x{count})")
+                all_items.append({'type': 'cargo', 'data': cargo_info, 'cargo_entry': cargo_entry})
+        
+        print("\n[1-{}] Select item | [z/Z] Back".format(len(all_items)))
         choice = input("Choice: ").strip().lower()
         
         if choice == 'z':
@@ -560,9 +613,12 @@ def edit_active_ship_menu(data):
         
         try:
             item_idx = int(choice) - 1
-            if 0 <= item_idx < len(items):
-                selected = items[item_idx]
-                edit_item_stats(selected['item'])
+            if 0 <= item_idx < len(all_items):
+                selected = all_items[item_idx]
+                if selected['type'] == 'equipment':
+                    edit_item_stats(selected['data']['item'])
+                elif selected['type'] == 'cargo':
+                    edit_cargo_quantity(selected['cargo_entry'])
             else:
                 print("Invalid selection.")
         except ValueError:
@@ -778,10 +834,14 @@ def edit_silverheart_menu(data):
                 print(f"  {current_idx+1}. {item_info['name']} - {item_info['slot']}")
                 current_idx += 1
         
+        cargo_data = active_ship.get('cargo', {}) if active_ship else {}
+        cargo_list = cargo_data.get('items', [])
+        
         if cargo_items:
             print("\n--- Active Ship Cargo ---")
             for cargo_info in cargo_items:
-                all_items.append(cargo_info)
+                cargo_entry = cargo_list[cargo_info['cargo_idx']]
+                all_items.append({'type': 'cargo', 'data': cargo_info, 'cargo_entry': cargo_entry})
                 print(f"  {current_idx+1}. {cargo_info['name']}")
                 current_idx += 1
         
@@ -798,7 +858,10 @@ def edit_silverheart_menu(data):
             item_idx = int(choice) - 1
             if 0 <= item_idx < len(all_items):
                 selected = all_items[item_idx]
-                edit_item_stats(selected['item'])
+                if isinstance(selected, dict) and selected.get('type') == 'cargo':
+                    edit_cargo_quantity(selected['cargo_entry'])
+                else:
+                    edit_item_stats(selected['item'])
             else:
                 print("Invalid selection.")
         except ValueError:
