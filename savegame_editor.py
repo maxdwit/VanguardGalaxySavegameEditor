@@ -466,6 +466,73 @@ def find_active_ship_items(data):
     return active_ship, items
 
 
+def get_item_aspects(item):
+    if not isinstance(item, dict):
+        return []
+    
+    aspect_slots = item.get('aspectSlots', [])
+    aspects = []
+    
+    for slot in aspect_slots:
+        if isinstance(slot, dict):
+            aspect = slot.get('equipAspect')
+            if aspect and aspect != 'None':
+                aspects.append(aspect)
+    
+    return aspects
+
+
+def get_active_ship_cargo(data):
+    current_guid = data.get('Player', {}).get('currentSpaceShip', '')
+    if not current_guid:
+        return None, []
+    
+    ships = data['Player'].get('spaceShips', [])
+    active_ship = None
+    
+    for ship in ships:
+        if ship.get('guid') == current_guid:
+            active_ship = ship
+            break
+    
+    if not active_ship:
+        return None, []
+    
+    cargo_items = []
+    cargo_data = active_ship.get('cargo', {})
+    cargo_list = cargo_data.get('items', [])
+    
+    for idx, cargo_entry in enumerate(cargo_list):
+        if cargo_entry and isinstance(cargo_entry, dict):
+            item = cargo_entry.get('item')
+            count = cargo_entry.get('count', 1)
+            
+            if isinstance(item, dict):
+                name = item.get('displayName', 'Unknown')
+                aspects = get_item_aspects(item)
+                
+                if aspects:
+                    aspect_str = ', '.join(aspects)
+                    display_name = f"{name} (x{count}) [{aspect_str}]"
+                else:
+                    display_name = f"{name} (x{count})"
+                
+                cargo_items.append({
+                    'name': display_name,
+                    'cargo_idx': idx,
+                    'item': item
+                })
+            elif isinstance(item, str):
+                cargo_items.append({
+                    'name': f"{item} (x{count})",
+                    'cargo_idx': idx,
+                    'item': cargo_entry,
+                    'is_simple': True
+                })
+    
+    return active_ship, cargo_items
+
+
 def edit_active_ship_menu(data):
     while True:
         active_ship, items = find_active_ship_items(data)
@@ -502,32 +569,235 @@ def edit_active_ship_menu(data):
             print("Invalid input.")
 
 
+def get_armory_aspects(data):
+    armory_data = data.get('Player', {}).get('globalInventory', {})
+    armory_items = armory_data.get('items', [])
+    
+    aspects = []
+    for idx, entry in enumerate(armory_items):
+        if entry and isinstance(entry, dict):
+            item = entry.get('item')
+            if isinstance(item, dict) and item.get('itemType') == 'Aspect':
+                aspect_name = item.get('aspectName', 'Unknown')
+                display_name = item.get('displayName', 'Unknown')
+                count = entry.get('count', 1)
+                aspects.append({
+                    'aspect_name': aspect_name,
+                    'display_name': display_name,
+                    'count': count,
+                    'armory_idx': idx
+                })
+    
+    return aspects
+
+
+def duplicate_aspect_menu(data):
+    _, cargo_items = get_active_ship_cargo(data)
+    armory_aspects = get_armory_aspects(data)
+    
+    if not cargo_items and not armory_aspects:
+        print("\nNo cargo items or armory aspects found.")
+        input("Press Enter to continue...")
+        return
+    
+    editable_items = [item for item in cargo_items if not item.get('is_simple', False)]
+    
+    if not editable_items and not armory_aspects:
+        print("\nNo items with aspects found.")
+        input("Press Enter to continue...")
+        return
+    
+    print("\n=== Duplicate Aspect ===")
+    
+    all_sources = []
+    
+    if editable_items:
+        print("\n--- Cargo Items ---")
+        for idx, item_info in enumerate(editable_items):
+            aspects = get_item_aspects(item_info['item'])
+            aspect_str = ', '.join(aspects) if aspects else 'No aspects'
+            print(f"  {len(all_sources)+1}. {item_info['item'].get('displayName', 'Unknown')} [{aspect_str}]")
+            all_sources.append({'type': 'cargo', 'data': item_info, 'idx': idx})
+    
+    if armory_aspects:
+        print("\n--- Armory Aspects ---")
+        for aspect_info in armory_aspects:
+            print(f"  {len(all_sources)+1}. {aspect_info['display_name']} (x{aspect_info['count']}) [{aspect_info['aspect_name']}]")
+            all_sources.append({'type': 'armory', 'data': aspect_info})
+    
+    source_choice = input("\nSelect SOURCE (number): ").strip()
+    if not source_choice:
+        return
+    
+    try:
+        source_idx = int(source_choice) - 1
+        if not (0 <= source_idx < len(all_sources)):
+            print("Invalid selection.")
+            input("Press Enter to continue...")
+            return
+    except ValueError:
+        print("Invalid input.")
+        input("Press Enter to continue...")
+        return
+    
+    source = all_sources[source_idx]
+    
+    if source['type'] == 'cargo':
+        source_item = source['data']['item']
+        source_aspects = get_item_aspects(source_item)
+        
+        if not source_aspects:
+            print("\nSource item has no aspects to copy.")
+            input("Press Enter to continue...")
+            return
+        
+        print(f"\nSource aspects: {', '.join(source_aspects)}")
+        
+        if len(source_aspects) > 1:
+            print("\nWhich aspect to copy?")
+            for idx, asp in enumerate(source_aspects):
+                print(f"  {idx+1}. {asp}")
+            aspect_choice = input("Select aspect (number): ").strip()
+            try:
+                aspect_idx = int(aspect_choice) - 1
+                if not (0 <= aspect_idx < len(source_aspects)):
+                    print("Invalid selection.")
+                    input("Press Enter to continue...")
+                    return
+                selected_aspect = source_aspects[aspect_idx]
+            except ValueError:
+                print("Invalid input.")
+                input("Press Enter to continue...")
+                return
+        else:
+            selected_aspect = source_aspects[0]
+    else:
+        selected_aspect = source['data']['aspect_name']
+        print(f"\nSelected aspect: {selected_aspect}")
+    
+    print(f"\nCopying aspect: {selected_aspect}")
+    
+    if source['type'] == 'cargo':
+        target_items = [item for i, item in enumerate(editable_items) if i != source['idx']]
+    else:
+        target_items = editable_items
+    
+    if not target_items:
+        print("\nNo other items available as target.")
+        input("Press Enter to continue...")
+        return
+    
+    print("\nAvailable TARGET Items:")
+    for idx, item_info in enumerate(target_items):
+        aspects = get_item_aspects(item_info['item'])
+        aspect_str = ', '.join(aspects) if aspects else 'No aspects'
+        print(f"  {idx+1}. {item_info['item'].get('displayName', 'Unknown')} [{aspect_str}]")
+    
+    target_choice = input("\nSelect TARGET item (number): ").strip()
+    if not target_choice:
+        return
+    
+    try:
+        target_idx = int(target_choice) - 1
+        if not (0 <= target_idx < len(target_items)):
+            print("Invalid selection.")
+            input("Press Enter to continue...")
+            return
+    except ValueError:
+        print("Invalid input.")
+        input("Press Enter to continue...")
+        return
+    
+    target_item = target_items[target_idx]['item']
+    target_aspects = get_item_aspects(target_item)
+    aspect_slots = target_item.get('aspectSlots', [])
+    
+    if len(target_aspects) >= 2:
+        print(f"\nTarget already has 2 aspects: {', '.join(target_aspects)}")
+        print("Which aspect to overwrite?")
+        for idx, asp in enumerate(target_aspects):
+            print(f"  {idx+1}. {asp}")
+        overwrite_choice = input("Select aspect to overwrite (number): ").strip()
+        try:
+            overwrite_idx = int(overwrite_choice) - 1
+            if not (0 <= overwrite_idx < len(target_aspects)):
+                print("Invalid selection.")
+                input("Press Enter to continue...")
+                return
+            
+            slot_idx = 0
+            for i, slot in enumerate(aspect_slots):
+                if isinstance(slot, dict) and slot.get('equipAspect') == target_aspects[overwrite_idx]:
+                    slot_idx = i
+                    break
+            
+            aspect_slots[slot_idx]['equipAspect'] = selected_aspect
+            print(f"\nReplaced '{target_aspects[overwrite_idx]}' with '{selected_aspect}'")
+        except ValueError:
+            print("Invalid input.")
+            input("Press Enter to continue...")
+            return
+    else:
+        empty_slot = None
+        for slot in aspect_slots:
+            if isinstance(slot, dict) and (slot.get('equipAspect') is None or slot.get('equipAspect') == 'None'):
+                empty_slot = slot
+                break
+        
+        if empty_slot:
+            empty_slot['equipAspect'] = selected_aspect
+            print(f"\nAdded aspect '{selected_aspect}' to target item.")
+        else:
+            if len(aspect_slots) < 2:
+                aspect_slots.append({'equipAspect': selected_aspect, 'index': str(len(aspect_slots))})
+                print(f"\nAdded aspect '{selected_aspect}' to new slot.")
+            else:
+                print("\nError: Could not add aspect (no empty slots).")
+    
+    input("\nPress Enter to continue...")
+
+
 def edit_silverheart_menu(data):
     while True:
         silverheart_items = find_silverheart_items(data)
-        
-        if not silverheart_items:
-            print("\nNo Silverheart items found.")
-            input("Press Enter to continue...")
-            return
+        active_ship, ship_items = find_active_ship_items(data)
+        _, cargo_items = get_active_ship_cargo(data)
         
         print("\nSilverheart Items:")
         for idx, si in enumerate(silverheart_items):
             print(f"  {idx+1}. {si['name']} - {si['location']}, {si['slot']}")
         
-        print("\n[1-{}] Select item to edit | [l/L] Load Active Ship | [z/Z] Back".format(len(silverheart_items)))
+        all_items = list(silverheart_items)
+        current_idx = len(all_items)
+        
+        if active_ship and ship_items:
+            print("\n--- Active Ship Equipment ---")
+            ship_name = active_ship.get('customName', 'Active Ship')
+            for item_info in ship_items:
+                all_items.append(item_info)
+                print(f"  {current_idx+1}. {item_info['name']} - {item_info['slot']}")
+                current_idx += 1
+        
+        if cargo_items:
+            print("\n--- Active Ship Cargo ---")
+            for cargo_info in cargo_items:
+                all_items.append(cargo_info)
+                print(f"  {current_idx+1}. {cargo_info['name']}")
+                current_idx += 1
+        
+        print("\n[1-{}] Select item to edit | [d/D] Duplicate Aspect | [z/Z] Back".format(len(all_items)))
         choice = input("Choice: ").strip().lower()
         
         if choice == 'z':
             break
-        elif choice == 'l':
-            edit_active_ship_menu(data)
+        elif choice == 'd':
+            duplicate_aspect_menu(data)
             continue
         
         try:
             item_idx = int(choice) - 1
-            if 0 <= item_idx < len(silverheart_items):
-                selected = silverheart_items[item_idx]
+            if 0 <= item_idx < len(all_items):
+                selected = all_items[item_idx]
                 edit_item_stats(selected['item'])
             else:
                 print("Invalid selection.")
